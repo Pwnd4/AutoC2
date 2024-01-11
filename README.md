@@ -27,10 +27,10 @@ This ansible-based solution helps to automate large parts of setting up the C2 i
 Before you get started, ensure you have the following items:
 - Ansible installed on your box
 	```
-		sudo apt update 
-		sudo apt install software-properties-common 
-		sudo apt-add-repository --yes --update ppa:ansible/ansible 
-		sudo apt install ansible
+	sudo apt update 
+	sudo apt install software-properties-common 
+	sudo apt-add-repository --yes --update ppa:ansible/ansible 
+	sudo apt install ansible
 	```
 - Basic Ubuntu instance (scripts can of course be adapted to other distros if preferred) created at your favourite cloud provider for every machine to be onboarded
 - Have a OpenVPN server set up as shown above and ssh sudo access to it
