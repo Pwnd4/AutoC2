@@ -19,7 +19,7 @@ This ansible-based solution helps to automate large parts of setting up the C2 i
 
 ![VPN Infrastructure](openvpn/Design/NetworkDesign.png)
 
->**#TODO:** Setup of the above OpenVPN server needs to be documented in more detail.
+>**#TODO:** Setup of the above OpenVPN server needs to be documented in more detail.  
 >**#TODO:** Setting up and using the CAs (operator CA and project CA) also needs more documentation.
 
 ## Prerequisites
