@@ -1,0 +1,12 @@
+all:
+  children:
+    teamserver:
+      hosts:
+        13.37.13.37:
+          ansible_ssh_user: red
+          ansible_port: 22
+    redirector:
+      hosts:
+        13.37.13.38:
+          ansible_ssh_user: red
+          ansible_port: 22

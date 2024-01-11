@@ -1,0 +1,135 @@
+---
+- name: Install and Configure Sliver C2
+  hosts: redirector
+  become: true
+
+  vars:
+    assigned_domain : "{{ domain | default('') }}"
+    TS_IP: "{{ teamserver_private_ip | default('') }}"
+
+  tasks:
+    - name: Check if domain and teamserver_private_ip are provided
+      fail:
+        msg: "Please provide both domain and teamserver_private_ip as extra-vars."
+      when: assigned_domain == "" or TS_IP == ""
+
+    - name: Install Apache and required modules
+      apt:
+        name: apache2
+        state: latest
+
+    - name: Enable required Apache modules
+      apache2_module:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - ssl
+        - rewrite
+        - proxy
+        - proxy_http
+
+    - name: Remove default site config
+      file:
+        path: /etc/apache2/sites-enabled/000-default.conf
+        state: absent
+
+    - name: Create symlink for default-ssl.conf
+      file:
+        src: /etc/apache2/sites-available/default-ssl.conf
+        dest: /etc/apache2/sites-enabled/default-ssl.conf
+        state: link
+      notify: Restart Apache service
+
+    - name: Install certbot package
+      apt:
+        name: certbot
+        state: latest
+
+    - name: Allow HTTP traffic
+      ufw:
+        rule: allow
+        port: '80'
+        proto: tcp
+      
+    - name: Allow HTTPS traffic
+      ufw:
+        rule: allow
+        port: '443'
+        proto: tcp
+
+    - name: Stop Apache service before running Certbot
+      service:
+        name: apache2
+        state: stopped
+
+    - name: Obtain Let's Encrypt certificate
+      command: certbot certonly --standalone --preferred-challenges http -d {{assigned_domain}} --non-interactive --agree-tos --email info@{{assigned_domain}}
+      register: certbot_output
+      ignore_errors: yes
+
+    - name: Start Apache service after running Certbot
+      service:
+        name: apache2
+        state: started
+
+    - name: Create a cron job for Let's Encrypt certificate renewal
+      cron:
+        name: "Renew Let's Encrypt certificate"
+        special_time: daily
+        job: "certbot renew --quiet"
+
+    - name: Restart Apache service
+      service:
+        name: apache2
+        state: restarted
+
+    - name: Enable Apache redirection
+      apache2_module:
+        name: rewrite
+        state: present
+
+    - name: Set up Apache redirection
+      copy:
+        content: |
+          <VirtualHost *:80>
+              ServerName {{ assigned_domain }}
+              Redirect / https://{{ assigned_domain }}/
+          </VirtualHost>
+        dest: /etc/apache2/sites-available/redirect.conf
+      notify: Restart Apache service
+
+    - name: Enable the redirection site
+      command: a2ensite redirect.conf
+      notify: Restart Apache service
+
+    - name: Setup Reverse Proxy and SSL Configuration with mod_rewrite
+      copy:
+        dest: /etc/apache2/sites-available/default-ssl.conf
+        content: |
+          <IfModule mod_ssl.c>
+              <VirtualHost _default_:443>
+                  ServerAdmin webmaster@localhost
+                  ServerName {{assigned_domain}}
+                  SSLEngine on
+                  SSLCertificateFile    /etc/letsencrypt/live/{{assigned_domain}}/fullchain.pem
+                  SSLCertificateKeyFile /etc/letsencrypt/live/{{assigned_domain}}/privkey.pem
+                  ErrorLog ${APACHE_LOG_DIR}/error.log
+                  CustomLog ${APACHE_LOG_DIR}/access.log combined
+                  RewriteEngine On
+                  RewriteRule ^/ec2/home/(.*)$ http://{{TS_IP}}/ec2/home/$1 [P,L]
+                  DocumentRoot /var/www/html
+              </VirtualHost>
+          </IfModule>
+      notify: Restart Apache service
+
+      
+    - name: Enable SSL site
+      command: a2ensite default-ssl
+      notify: Restart Apache service
+      
+  handlers:
+    - name: Restart Apache service
+      service:
+        name: apache2
+        state: restarted
+      

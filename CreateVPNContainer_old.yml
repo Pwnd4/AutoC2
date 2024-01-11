@@ -1,0 +1,143 @@
+---
+- name: Copy and Configure LXD Container on Remote Host
+  hosts: "{{ target_host }}"
+  become: yes
+  vars:
+    source_container_name: Project-Template
+    db_file: /root/Scripts/container_db.txt
+    current_id: /root/Scripts/ID.txt
+    project_name: "{{ project | lower }}"
+
+  tasks:
+    # Read the value from current_id
+    - name: Get the value of ProjectID from "{{ current_id }}"
+      slurp:
+        src: "{{ current_id }}"
+      register: current_id_content
+      changed_when: false
+
+    - name: Set CurrentID variable
+      set_fact:
+        ProjectID: "{{ current_id_content['content'] | b64decode | trim }}"
+
+    # Check if project_name defined by the user
+    - name: Fail if project_name is not provided
+      fail:
+        msg: "project_name is required!"
+      when: project_name is undefined or project_name | trim == ''
+    
+    # Set destination container name
+    - name: Set destination_container_name variable
+      set_fact:
+        destination_container_name: "C{{ ProjectID }}-{{ project_name }}"
+        project_md5_hash: "{{ project_name | hash('md5') }}"
+
+    # Check if destination_container_name exists in db_file
+    - name: Check if project name exists
+      shell: grep -q "{{ project_md5_hash }}" {{ db_file }}
+      register: grep_result
+      failed_when: false
+      ignore_errors: true
+
+#    - debug:
+#        var: grep_result.rc
+
+    - name: Abort if project name is found
+      fail:
+        msg: "{{ project_name }} already exists!"
+      when: grep_result.rc == 0
+
+    # If destination_container_name is not found, append to the DB file
+    - name: Append to DB if not exists
+      lineinfile:
+        path: "{{ db_file }}"
+        line: "{{ ProjectID }} | {{ destination_container_name }} | 10.100.{{ ProjectID }}.0/24 | {{ project_md5_hash }} | 35{{ ProjectID }}"
+        create: yes
+      when: grep_result.rc == 2 or grep_result.rc == 1
+
+    # Copy the container
+    - name: Copy container from template
+      command: lxc copy "{{ source_container_name }}" "{{ destination_container_name }}"
+      when: destination_container_name is defined
+
+    # Clean up port forwarding from template
+    - name: Remove existing port forwarding from Template
+      command: lxc config device remove "{{ destination_container_name }}" myport35100
+    
+    # Add new port forwarding to new container
+    - name: Add new port forwarding to new container
+      command: "lxc config device add {{ destination_container_name }} myport35{{ ProjectID }} proxy listen=tcp:172.16.251.37:35{{ ProjectID }} connect=tcp:127.0.0.1:35{{ ProjectID }}"
+
+    # Start the new container
+    - name: Start the new container
+      command: lxc start "{{ destination_container_name }}"
+
+    # Give it some time to fully start before connecting
+    - name: Wait a few seconds for the container to be fully started
+      pause:
+        seconds: 10
+
+    - name: Update netplan config inside the container
+      command: |
+        lxc exec "{{ destination_container_name }}" -- bash -c "cat > /etc/netplan/50-cloud-init.yaml <<EOL
+          network:                                       
+            version: 2                                 
+            ethernets:                                 
+                eth0:                                  
+                    dhcp4: no                          
+                    addresses: [ 10.216.201.{{ ProjectID }}/24, 172.30.30.{{ ProjectID }}/24 ]                                 
+                    routes:                            
+                      - to: 172.30.30.0/24
+                        via: 10.216.201.1
+                        metric: 0
+                      - to: 0.0.0.0/0
+                        via: 10.216.201.1
+                        metric: 100
+                    dhcp6: no 
+        EOL"
+
+
+    # Modify /etc/iptables/rules.v4 inside the container
+    - name: Modify iptables configuration
+      command: 
+        "lxc exec \"{{ destination_container_name }}\" -- 
+        sed -i 's|-A POSTROUTING -s 172.30.30.0/24 -d 10.100.100.0/24 -j MASQUERADE|-A POSTROUTING -s 172.30.30.0/24 -d 10.100.{{ ProjectID }}.0/24 -j MASQUERADE|' /etc/iptables/rules.v4"
+
+
+    # Modify /etc/openvpn/server/project.conf inside the container
+    - name: Modify OpenVPN port configuration
+      command: 
+        "lxc exec \"{{ destination_container_name }}\" -- 
+        sed -i 's|^port 35100|port 35{{ ProjectID }}|' /etc/openvpn/server/project.conf"
+
+    - name: Modify OpenVPN server configuration
+      command: 
+        "lxc exec \"{{ destination_container_name }}\" -- 
+        sed -i 's|^server 10.100.100.0|server 10.100.{{ ProjectID }}.0|' /etc/openvpn/server/project.conf"
+
+
+    # Remove specified files inside the container
+    - name: Remove OpenVPN related files
+      command: 'lxc exec "{{ destination_container_name }}" -- rm "{{ item }}"'
+      ignore_errors: true  # Ignore errors if a file doesn't exist
+      with_items:
+        - "/var/log/openvpn_Project.log"
+        - "/var/log/openvpn-Project-status.log"
+        - "/etc/openvpn/server/Project/ipp_project.txt"
+
+    # Remove all files in /etc/openvpn/server/Project/ccd/ inside the container
+    - name: Remove all files in OpenVPN CCD directory
+      command: lxc exec "{{ destination_container_name }}" -- sh -c "rm /etc/openvpn/server/Project/ccd/*"
+      ignore_errors: true  # To prevent errors if the directory is already empty or doesn't exist.
+
+
+    # Update current_id with the incremented value
+    - name: Update ProjectID value in {{ current_id }}
+      lineinfile:
+        path: "{{ current_id }}"
+        regexp: '.*'
+        line: "{{ (ProjectID | int) + 1 }}"
+
+    # Restart the LXD container
+    - name: Restart the container
+      command: lxc restart "{{ destination_container_name }}"

@@ -1,0 +1,19 @@
+{
+    "daemon_mode": true,
+    "daemon": {
+        "host": "",
+        "port": 31337
+    },
+    "logs": {
+        "level": 4,
+        "grpc_unary_payloads": false,
+        "grpc_stream_payloads": false,
+        "tls_key_logger": false
+    },
+    "jobs": {
+        "multiplayer": null
+    },
+    "watch_tower": null,
+    "go_proxy": ""
+}
+

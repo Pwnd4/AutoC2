@@ -1,0 +1,101 @@
+---
+- name: Setup OpenVPN and Configure UFW to allow SSH only on VPN
+  hosts: "{{ target_host }}"
+  become: yes
+  gather_facts: no
+
+  vars:
+    openvpn_config_file: "{{ openvpn_config_file | default('') }}"
+    set_role: "{{ setup_role | default('') | lower }}"
+
+  tasks:
+    - name: Ensure both arguments are provided
+      assert:
+        that:
+          - "openvpn_config_file != ''"
+          - "set_role != ''"
+        fail_msg: "Please provide both openvpn_config_file and set_role as command line arguments."
+
+    - name: Ensure set_role has valid values
+      assert:
+        that:
+          - "set_role in ['teamserver', 'redirector']"
+        fail_msg: "Invalid value for set_role. It can only be 'teamserver' or 'redirector'."
+
+    - name: Install required packages
+      apt:
+        name:
+          - openvpn
+          - ufw
+        state: present
+    
+    - name: Copy OpenVPN config to remote host
+      copy:
+        src: "{{ openvpn_config_file }}"
+        dest: "/etc/openvpn/client.conf"
+    
+    - name: Enable and Start OpenVPN Service
+      systemd:
+        name: openvpn@client
+        enabled: yes
+        state: started
+    
+    - name: Wait a few seconds for the VPN connection to be fully started
+      pause:                                                                         
+        seconds: 10
+    
+    - name: Get VPN IP Address
+      shell: ip addr show tun0 | grep "inet\b" | awk '{print $2}' | cut -d/ -f1
+      register: vpn_ip
+      changed_when: False
+      ignore_errors: True
+    
+    - name: Calculate VPN Network
+      set_fact:
+        vpn_network: "{{ vpn_ip.stdout | ipsubnet(24) }}"
+      when: vpn_ip.rc == 0 and vpn_ip.stdout | ipaddr
+
+
+    - name: Disable UFW
+      ufw:
+        state: disabled
+      
+    - name: Reset all UFW rules
+      command: ufw --force reset
+    
+    - name: Set UFW default incoming policy to deny
+      ufw:
+        direction: incoming
+        policy: deny
+    
+    - name: Allow SSH access from "{{ vpn_network }}" network
+      command: ufw allow proto tcp from "{{ vpn_network }}" to any port 22
+
+    - name: Allow HTTPS access from "{{ vpn_network }}" network
+      command: ufw allow proto tcp from "{{ vpn_network }}" to any port 443
+      when:  set_role | lower == "teamserver"
+
+    - name: Allow HTTP access from "{{ vpn_network }}" network
+      command: ufw allow proto tcp from "{{ vpn_network }}" to any port 80
+      when: set_role | lower == "teamserver"
+
+    - name: Allow Sliver access from "{{ vpn_network }}" network
+      command: ufw allow proto tcp from "{{ vpn_network }}" to any port 31337
+      when: set_role | lower == "teamserver"
+
+    - name: Allow HTTPS access from any network
+      command: ufw allow proto tcp from any to any port 443
+      when: set_role | lower == "redirector"
+
+    - name: Allow HTTP access from any network
+      command: ufw allow proto tcp from any to any port 80
+      when: set_role | lower == "redirector"
+
+
+    - name: Deny all incoming SSH traffic
+      command: ufw deny proto tcp from any to any port 22
+      
+    - name: Enable UFW
+      ufw:
+        state: enabled
+

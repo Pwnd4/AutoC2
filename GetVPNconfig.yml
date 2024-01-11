@@ -1,0 +1,88 @@
+
+---
+- hosts: "{{ target_host }}" 
+  gather_facts: false
+  become: yes
+  vars_prompt:
+    - name: "CA_PASSWORD"
+      prompt: "Enter the CA password"
+      private: yes
+
+  vars:
+    project_name: "{{ project_name | default('') }}"
+    role_name: "{{ role_name | default('') }}"
+
+
+  tasks:
+    - name: Check if project_name and role_name are provided
+      fail:
+        msg: "Please provide both project_name and role_name as extra-vars."
+      when: project_name == "" or role_name == ""
+
+    - name: Cert_Name 
+      set_fact:
+        name: "{{ project_name | lower }}-{{ role_name | lower }}"
+
+    - name: Lookup for VPN port
+      shell: /root/Scripts/port_lookup.sh {{ project_name | lower }}
+      register: port_lookup
+      ignore_errors: true
+
+    - name: Print shell command output
+      debug:
+        var: port_lookup.stdout
+
+
+    - name: Check the port number
+      fail:
+        msg: "The script for lookup VPN port number returned an empty result. Exiting playbook."
+      when: port_lookup.stdout == ""
+
+    - name: VPN Port number found
+      set_fact:
+        vpn_port: "{{ port_lookup.stdout }}"
+
+    - name: Capture user and IP information
+      delegate_to: localhost
+      run_once: true
+      set_fact:
+        ansible_runner: "{{ lookup('env', 'USER') }}"
+
+    - name: Lookup for VPN cert
+      shell: /root/Scripts/vpn_cert_checker.sh {{ project_name | lower }} {{ role_name | lower }} {{ ansible_runner | lower }}
+      register: cert_lookup_ip
+      
+    - name: Check the vpn_cert_checker.sh output for errors
+      fail:
+        msg: "The script encountered an error: {{ cert_lookup_ip.stdout }}"
+      when: "'error' in cert_lookup_ip.stdout | lower"
+
+    - name: Execute Generate_Project_Config.sh script inside LXD container
+      command: lxc exec Certificate -- /root/Projects/Generate_Project_Config.sh "{{ name }}" "{{ CA_PASSWORD }}" "{{ vpn_port }}"
+
+    - name: Fetch generated .ovpn file from container to local machine
+      command: lxc file pull Certificate/root/Projects/Projects-client-configs/files/{{ name }}.ovpn ./{{ name }}.ovpn
+
+    - name: Fetch .ovpn file from remote host to Ansible controller
+      fetch:
+        src: "./{{ name }}.ovpn"
+        dest: "{{ playbook_dir }}/VPNConfigs/{{ name }}.ovpn"
+        flat: yes
+
+    - name: Delete the .ovpn file from local machine on the remote host
+      file:
+        path: "./{{ name }}.ovpn"
+        state: absent
+
+    - name: Ask if the user wants to delete the .ovpn file
+      pause:
+        prompt: "Do you want to delete {{ name }}.ovpn file? (yes/no)"
+      register: user_response
+
+    - name: Delete .ovpn file from container if user agrees
+      command: lxc file delete Certificate/root/Projects/Projects-client-configs/files/{{ name }}.ovpn
+      when: user_response.user_input | lower == 'yes'
+
+    - name: Display the IP address of VPN client
+      debug:
+        msg: "The IP Address of this VPN Client is: {{ cert_lookup_ip.stdout_lines[-1] }} ! Please make sure you write down the IP address of TeamServer which you need it on redirector machines!"

@@ -1,0 +1,25 @@
+---
+- name: Asset lookup
+  hosts: "{{ target_host }}" 
+  vars:
+    filename: "/root/Scripts/vpn_cert_db.txt"
+    project_name: "{{ project | lower }}" 
+
+  tasks:
+    - name: Calculate MD5 hash of the provided name
+      set_fact:
+        name_hash: "{{ project_name | hash('md5') }}"
+    
+    - name: Grep for MD5 hash in vpn_cert_db file
+      become: yes 
+      shell: "grep '{{ name_hash }}' {{ filename }} || true"
+      register: grep_result
+      changed_when: false
+    
+    - name: Display result
+      debug:
+        msg: |
+          Assets related to project "{{ project_name }}" :
+          ---
+          {{ grep_result.stdout }}
+      when: grep_result.stdout != ""

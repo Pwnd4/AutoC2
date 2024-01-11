@@ -1,0 +1,213 @@
+---
+- name: Ubuntu Hardening
+  hosts: all
+  become: yes
+
+  vars:
+    # add new user "red" for future administrative operations
+    new_user: red
+    # set password for sudo 
+    password_hash: "<PUT_YOUR_HASH_HERE>"
+    # set operators ssh keys to let them log in 
+    ssh_keys:
+      - ssh-ed25519 <PUT_YOUR_HASH_HERE>
+      - ssh-rsa <PUT_YOUR_HASH_HERE>
+      - ...
+
+  tasks:
+    - name: Ensure the apt package list is updated
+      apt:
+        update_cache: yes
+        
+    - name: Upgrade all packages to the latest version
+      apt:
+        upgrade: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - gpg
+          - curl
+          - build-essential
+          - git
+          - mingw-w64
+          - binutils-mingw-w64
+          - g++-mingw-w64
+          - libpkcs11-helper1
+          - openvpn
+          - tmux
+          - vim
+          - net-tools
+        state: present
+
+    - name: Remove unnecessary packages
+      apt:
+        name: "{{ item }}"
+        state: absent
+        purge: yes
+      loop:
+        - xinetd
+        - nis
+        - yp-tools
+        - tftpd
+        - atftpd
+        - tftpd-hpa
+        - telnetd
+        - rsh-server
+        - rsh-redone-server
+
+    - name: Check if cups service exists
+      shell: systemctl list-unit-files | grep -q cups.service && echo "exists" || echo "does not exist"
+      changed_when: false
+      register: service_check
+      
+    - name: Stop and Disable cups service
+      systemd:
+        name: cups
+        state: stopped
+        enabled: no
+      when: service_check.stdout == "exists"
+
+    - name: Install unattended-upgrades package
+      apt:
+        name: unattended-upgrades
+        state: present
+
+    - name: Configure unattended-upgrades
+      copy:
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        content: |
+          Unattended-Upgrade::Allowed-Origins {
+                  "${distro_id}:${distro_codename}";
+                  "${distro_id}:${distro_codename}-security";
+                  "${distro_id}ESMApps:${distro_codename}-apps-security";
+                  "${distro_id}ESM:${distro_codename}-infra-security";
+          };
+          
+          Unattended-Upgrade::Package-Blacklist {
+          };
+          
+          Unattended-Upgrade::DevRelease "auto";
+          
+    - name: Configure auto-upgrades
+      copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+
+
+    - name: Ensure permissions on /etc/passwd are configured
+      file:
+        path: /etc/passwd
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Ensure permissions on /etc/shadow are configured
+      file:
+        path: /etc/shadow
+        owner: root
+        group: shadow
+        mode: '0640'
+
+    - name: Ensure no users have .forward files
+      find:
+        paths: /home
+        patterns: .forward
+        recurse: yes
+      register: forward_files
+      failed_when: forward_files.matched > 0
+
+
+    - name: Harden SSH Configuration
+      copy:
+        dest: /etc/ssh/sshd_config
+        content: |
+          PermitRootLogin no
+          ChallengeResponseAuthentication no
+          PasswordAuthentication no
+          UsePAM yes
+          X11Forwarding no
+          PrintMotd no
+          PubkeyAuthentication yes
+      notify:
+        - restart ssh
+
+    - name: Add a new user
+      user:
+        name: "{{ new_user }}"
+        state: present
+        groups: sudo
+        shell: /bin/bash
+        create_home: yes
+        append: yes
+      register: user_result
+      ignore_errors: true
+
+    - name: Set user password hash in /etc/shadow
+      lineinfile:
+        path: /etc/shadow
+        regexp: '^{{ new_user }}:'
+        line: "{{ new_user }}:{{ password_hash }}:18278:0:99999:7:::"
+      no_log: true
+
+    - name: Add SSH keys to new user's authorized_keys
+      authorized_key:
+        user: "{{ new_user }}"
+        key: "{{ item }}"
+      loop: "{{ ssh_keys }}"
+
+
+    - name: Schedule job to disable current user at reboot
+      cron:
+        name: "Disable current user"
+        special_time: reboot
+        job: "usermod -L {{ ansible_user }}"
+
+    - name: Ensure .ssh/authorized_keys is absent for user {{ ansible_user }}
+      file:
+        path: "/home/{{ ansible_user }}/.ssh/authorized_keys"
+        state: absent
+
+
+    - name: Install UFW firewall
+      apt:
+        name: ufw
+        state: present
+
+    - name: Allow SSH through UFW
+      ufw:
+        rule: allow
+        name: OpenSSH
+        
+
+    - name: Enable UFW firewall
+      ufw:
+        state: enabled
+        policy: deny
+
+
+    - name: Print Notification Message
+      debug:
+        msg: >-
+          Attention! The current user {{ ansible_user }} is not valid anymore. 
+          Please use 'red' user to connect in the future.
+          Don't worry if you get any error for Failed to connect to the host via ssh! It is completely normal!
+
+
+    
+    - name: Restart the machine
+      reboot:
+        msg: "Rebooting for system hardening"
+        connect_timeout: 5
+        reboot_timeout: 60  # Adjust as needed
+      ignore_errors: yes
+
+    - meta: end_play
+
+  handlers:
+    - name: restart ssh
+      service:
+        name: ssh
+        state: restarted
