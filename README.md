@@ -41,8 +41,8 @@ Before you get started, ensure you have the following items:
 
 1. **Clone the repository**:    
 ```
-	git clone https://github.com/Pwnd4/AutoC2.git
-	cd AutoC2
+git clone https://github.com/Pwnd4/AutoC2.git
+cd AutoC2
 ```
 
 2. **Create Inventory file**
