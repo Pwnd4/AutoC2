@@ -64,7 +64,7 @@ ansible-playbook -K -i inventories/infra_inventory.ini CreateVPNContainer.yml -e
 
 - Asks for _sudo password_ on *your OpenVPN server (redteam_vpn)*
 
-4. **Install prerequisites packages and setup hardening configuration on machines to be onboarded**
+4. **Install prerequisites packages and setup hardening configuration on machines to be onboarded**.  
    Set up password hash and the operators' ssh keys in the "Harden_and_Install.yml" file before running the playbook.
 ```
 ansible-playbook -i '<IP_ADDRESS>,' -e "ansible_ssh_user=<USER_NAME>" -e "ansible_ssh_private_key_file=<PATH_FOR_PRIVATE_SSH_KEY>" -e "ansible_port=22" Harden_and_Install.yml
