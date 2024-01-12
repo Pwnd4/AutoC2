@@ -3,7 +3,7 @@
 This ansible-based solution helps to automate large parts of setting up the C2 infrastructure for a new Red Team engagement. At the moment this is a basic version limited to teamservers (Sliver) and redirectors. But it can easily be adapted to other frameworks or roles.
 
 > **This is meant to be used in testing environments. Why should I not use it for real Red Team engagements?** 
-> The scripts assume, you have already created the needed redirectors and teamserver(s) as cloud instances. While this is normal for redirectors, it's not ideal for teamservers. Although the teamserver is only accessible through the VPN, it still would be **better OPSEC to host it on-premise** instead of in the cloud.
+> The scripts assume, you have already created a cloud instance for every redirector and teamserver. While running as a cloud instance is normal for redirectors, it's not ideal for teamservers. Although in our scenario the teamserver is only accessible through the VPN, it still would be **better OPSEC to host it on-premise** instead of in the cloud.
 > A version of AutoC2 that reflects the latter scenario is planned.
 
 ## Features
